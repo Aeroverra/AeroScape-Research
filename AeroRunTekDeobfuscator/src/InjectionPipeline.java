@@ -3,6 +3,8 @@ import injection.IpRedirectInjection;
 import injection.IsaacBypassInjection;
 import injection.JarLoader;
 import injection.JarRepackager;
+import injection.NativeLibraryBundler;
+import injection.NativeLoaderInjection;
 import injection.RsaLobotomyInjection;
 
 import java.io.BufferedWriter;
@@ -64,22 +66,29 @@ public final class InjectionPipeline {
         // Step 4: Apply ISAAC Cipher Bypass
         int isaacPatches = IsaacBypassInjection.apply(ctx);
 
-        // Step 5: Detect main class and repackage
+        // Step 5: Native loader command-10 handler (no-op jump to success)
+        int nativeLoaderPatches = NativeLoaderInjection.apply(ctx);
+
+        // Step 6: Detect main class and repackage
         String mainClass = JarRepackager.detectMainClass(ctx);
         File outputJar = new File(injectionDir, baseName + "_patched.jar");
         JarRepackager.repack(jarFile, ctx, outputJar, mainClass);
 
-        // Step 6: Generate run.bat
+        // Step 7: Bundle native libraries, hdlibs.jar, and Boot.class
+        boolean bundled = NativeLibraryBundler.bundle(injectionDir, mainClass);
+
+        // Step 8: Generate run.bat
         generateRunBat(injectionDir, outputJar.getName(), mainClass);
 
         // Summary
         System.out.println();
         System.out.println("[InjectionPipeline] ======= Injection Summary =======");
-        System.out.println("[InjectionPipeline] RSA patches applied   : " + rsaPatches);
-        System.out.println("[InjectionPipeline] IP patches applied    : " + ipPatches);
-        System.out.println("[InjectionPipeline] ISAAC patches applied : " + isaacPatches);
-        System.out.println("[InjectionPipeline] Output JAR          : " + outputJar.getAbsolutePath());
-        System.out.println("[InjectionPipeline] Main-Class          : " + mainClass);
+        System.out.println("[InjectionPipeline] RSA patches applied       : " + rsaPatches);
+        System.out.println("[InjectionPipeline] IP patches applied        : " + ipPatches);
+        System.out.println("[InjectionPipeline] ISAAC patches applied     : " + isaacPatches);
+        System.out.println("[InjectionPipeline] Native loader patches     : " + nativeLoaderPatches);
+        System.out.println("[InjectionPipeline] Output JAR              : " + outputJar.getAbsolutePath());
+        System.out.println("[InjectionPipeline] Main-Class              : " + mainClass);
         System.out.println("[InjectionPipeline] ================================");
 
         return true;
@@ -95,8 +104,15 @@ public final class InjectionPipeline {
         try {
             w = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(runBat), "UTF-8"));
             w.write("@echo off\r\n");
+            w.write("setlocal EnableDelayedExpansion\r\n");
+            w.write("cd /d \"%~dp0\"\r\n");
+            w.write("\r\n");
+            w.write(":: Add JRE bin to PATH so jawt.dll and its dependencies resolve.\r\n");
+            w.write("for /f \"delims=\" %%i in ('where java') do set \"JAVA_BIN=%%~dpi\"\r\n");
+            w.write("set \"PATH=!JAVA_BIN!..\\jre\\bin;!PATH!\"\r\n");
+            w.write("\r\n");
             w.write("echo Launching patched RS 508 client...\r\n");
-            w.write("java -jar \"" + jarName + "\" 1 live live software members english game0\r\n");
+            w.write("java -cp \".;" + jarName + ";lib/hdlibs.jar\" Boot\r\n");
             w.write("pause\r\n");
         } finally {
             if (w != null) {
