@@ -29,8 +29,8 @@ public final class WrapperGenerator {
         System.out.println("[WrapperGenerator] Generating wrapper files ...");
 
         String template = loadTemplate();
-        String jarPath = jarFile.getAbsolutePath().replace('\\', '/');
-        String source = template.replace("{JAR_PATH}", jarPath);
+        String jarName = jarFile.getName();
+        String source = template.replace("{JAR_PATH}", jarName);
 
         writeFile(new File(outputDir, "Main.java"), source);
         System.out.println("[WrapperGenerator] Written: Main.java");

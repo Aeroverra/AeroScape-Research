@@ -93,9 +93,21 @@ public class Main {
             return false;
         }
 
-        // Step 3: Generate wrapper
+        // Step 3: Copy JAR into output so the wrapper can reference it
+        String jarName = stripExtension(inputFile.getName()) + ".jar";
+        File outputJar = new File(outputDir, jarName);
         try {
-            WrapperGenerator.generate(outputDir, jarFile);
+            copyFile(jarFile, outputJar);
+            System.out.println("[INFO] Client JAR copied to: " + outputJar.getAbsolutePath());
+        } catch (IOException e) {
+            System.err.println("[ERROR] Failed to copy JAR to output: " + e.getMessage());
+            cleanupTemp(jarFile, inputFile);
+            return false;
+        }
+
+        // Step 4: Generate wrapper
+        try {
+            WrapperGenerator.generate(outputDir, outputJar);
         } catch (IOException e) {
             System.err.println("[ERROR] Wrapper generation failed: " + e.getMessage());
             e.printStackTrace(System.err);
@@ -114,6 +126,23 @@ public class Main {
             if (jarFile.delete()) {
                 System.out.println("[INFO] Temporary JAR removed.");
             }
+        }
+    }
+
+    private static void copyFile(File src, File dst) throws IOException {
+        java.io.FileInputStream fis = null;
+        java.io.FileOutputStream fos = null;
+        try {
+            fis = new java.io.FileInputStream(src);
+            fos = new java.io.FileOutputStream(dst);
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = fis.read(buf)) > 0) {
+                fos.write(buf, 0, n);
+            }
+        } finally {
+            if (fis != null) try { fis.close(); } catch (IOException ignored) {}
+            if (fos != null) try { fos.close(); } catch (IOException ignored) {}
         }
     }
 
