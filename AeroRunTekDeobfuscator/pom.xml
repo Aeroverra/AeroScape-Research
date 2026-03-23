@@ -31,6 +31,11 @@
             <artifactId>asm-tree</artifactId>
             <version>9.7.1</version>
         </dependency>
+        <dependency>
+            <groupId>org.glavo</groupId>
+            <artifactId>pack200</artifactId>
+            <version>0.3.0</version>
+        </dependency>
     </dependencies>
 
     <build>

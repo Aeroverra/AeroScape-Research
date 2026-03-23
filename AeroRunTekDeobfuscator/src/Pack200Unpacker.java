@@ -6,17 +6,18 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.lang.reflect.Method;
 import java.util.jar.JarOutputStream;
 import java.util.zip.Inflater;
+
+import org.glavo.pack200.Pack200;
 
 /**
  * Pack200Unpacker
  *
  * Handles conversion of .pack200 / .packclass files into standard JAR files.
- * Uses reflection to access the Pack200 API (available in JDK 8-13, removed
- * in JDK 14+). If the input is already a plain JAR file it is returned
- * unchanged.
+ * Uses org.glavo:pack200 — a standalone Pack200 implementation that works on
+ * any JDK version (the JDK built-in API was removed in JDK 14).
+ * If the input is already a plain JAR file it is returned unchanged.
  */
 public final class Pack200Unpacker {
 
@@ -90,38 +91,21 @@ public final class Pack200Unpacker {
         // Create a temp file that will hold the resulting JAR.
         File tempJar = File.createTempFile("aerodeob_", ".jar");
 
-        // Pack200 API was removed in JDK 14 (JEP 367). Use reflection so this
-        // class compiles on any JDK, but can still unpack on JDK 8-13.
         OutputStream out = null;
         JarOutputStream jos = null;
 
         try {
-            Class<?> pack200Class = Class.forName("java.util.jar.Pack200");
-            Method newUnpacker = pack200Class.getMethod("newUnpacker");
-            Object unpacker = newUnpacker.invoke(null);
-
-            // unpacker.properties().put(Pack200.Unpacker.DEFLATE_HINT, "false")
-            Method properties = unpacker.getClass().getMethod("properties");
-            @SuppressWarnings("unchecked")
-            java.util.SortedMap<String, String> props =
-                    (java.util.SortedMap<String, String>) properties.invoke(unpacker);
-            props.put("pack.deflate.hint", "false");
+            Pack200.Unpacker unpacker = Pack200.newUnpacker();
+            unpacker.properties().put(Pack200.Unpacker.DEFLATE_HINT, "false");
 
             out = new FileOutputStream(tempJar);
             jos = new JarOutputStream(out);
 
-            // unpacker.unpack(packStream, jos)
-            Method unpackMethod = unpacker.getClass().getMethod("unpack", InputStream.class, JarOutputStream.class);
-            unpackMethod.invoke(unpacker, packStream, jos);
+            unpacker.unpack(packStream, jos);
 
             jos.finish();
             System.out.println("[Pack200Unpacker] Unpacked to temporary JAR: " + tempJar.getAbsolutePath());
             return tempJar;
-        } catch (ClassNotFoundException e) {
-            safeDelete(tempJar);
-            throw new IOException(
-                    "Pack200 API is not available on this JDK (removed in JDK 14). " +
-                    "To unpack .pack200/.packclass files, use JDK 8-13 or provide a pre-unpacked .jar instead.", e);
         } catch (IOException e) {
             safeDelete(tempJar);
             throw new IOException("Failed to unpack pack200 file '" + packFile.getName() + "': " + e.getMessage(), e);
