@@ -1,18 +1,18 @@
-import org.benf.cfr.reader.api.CfrDriver;
+import org.jetbrains.java.decompiler.main.decompiler.ConsoleDecompiler;
 
 import java.io.File;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Decompiler
  *
- * Wraps the CFR decompiler library to programmatically decompile all classes
- * contained in a JAR file, writing individual .java source files into the
- * specified output directory.
+ * Wraps the Vineflower decompiler library to programmatically decompile all
+ * classes contained in a JAR file, writing individual .java source files into
+ * the specified output directory.
  *
- * CFR version: 0.152  (last release with full Java 8 class-file support)
+ * Vineflower (formerly Quiltflower) is a modern fork of FernFlower with
+ * improved output quality for obfuscated bytecode.
  */
 public final class Decompiler {
 
@@ -26,40 +26,46 @@ public final class Decompiler {
      *
      * @param jarFile   the JAR whose classes will be decompiled
      * @param outputDir directory where .java files will be written
-     * @throws Exception if CFR encounters a fatal error
+     * @throws Exception if Vineflower encounters a fatal error
      */
     public static void decompile(File jarFile, File outputDir) throws Exception {
-        System.out.println("[Decompiler] Decompiling with CFR: " + jarFile.getName() + " ...");
-        System.out.println("[Decompiler] Output directory    : " + outputDir.getAbsolutePath());
+        System.out.println("[Decompiler] Decompiling with Vineflower: " + jarFile.getName() + " ...");
+        System.out.println("[Decompiler] Output directory            : " + outputDir.getAbsolutePath());
 
-        // ── Build CFR options ─────────────────────────────────────────────────
-        Map<String, String> options = new HashMap<String, String>();
+        if (!outputDir.exists()) {
+            outputDir.mkdirs();
+        }
 
-        // Write decompiled sources to disk
-        options.put("outputdir", outputDir.getAbsolutePath());
+        // ── Build Vineflower CLI args ─────────────────────────────────────────
+        List<String> args = new ArrayList<String>();
 
         // Do NOT rename identifiers - we want the obfuscated names as-is
-        options.put("renameillegalidents", "false");
+        args.add("-ren=0");
 
-        // Keep all boilerplate (constructors, default methods, etc.)
-        options.put("removeboilerplate", "false");
+        // Decompile inner classes
+        args.add("-din=1");
 
-        // Enable recovery mode so CFR tries its best on obfuscated bytecode
-        options.put("recover", "true");
+        // Decompile generic signatures
+        args.add("-dgs=1");
 
-        // Suppress the CFR version header comment
-        options.put("showversion", "false");
+        // Keep bridge methods visible (useful for obfuscated code analysis)
+        args.add("-rbr=0");
 
-        // Keep inner class information consistent
-        options.put("decodefinally", "true");
+        // Keep synthetic members visible
+        args.add("-rsy=0");
 
-        // ── Run CFR (using default file-writing sink) ─────────────────────────
-        CfrDriver driver = new CfrDriver.Builder()
-                .withOptions(options)
-                .build();
+        // Suppress the Vineflower banner comment
+        args.add("-ban=");
 
-        // Pass the JAR path; CFR decompiles all classes it finds inside.
-        driver.analyse(Collections.singletonList(jarFile.getAbsolutePath()));
+        // Decode finally blocks
+        args.add("-fdi=1");
+
+        // Source JAR and output directory
+        args.add(jarFile.getAbsolutePath());
+        args.add(outputDir.getAbsolutePath());
+
+        // ── Run Vineflower via its public CLI entry point ─────────────────────
+        ConsoleDecompiler.main(args.toArray(new String[0]));
 
         System.out.println("[Decompiler] Decompilation complete.");
     }
