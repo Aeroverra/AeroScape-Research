@@ -1,10 +1,14 @@
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.jar.JarOutputStream;
 import java.util.jar.Pack200;
+import java.util.zip.Inflater;
 
 /**
  * Pack200Unpacker
@@ -55,50 +59,102 @@ public final class Pack200Unpacker {
         );
     }
 
+    /** Pack200 magic bytes: CAFED00D */
+    private static final int PACK200_MAGIC = 0xCAFED00D;
+
     /**
      * Performs the actual Pack200 -> JAR conversion.
-     *
-     * @param packFile the .pack200 / .packclass source file
-     * @return a temporary JAR file containing the unpacked contents
-     * @throws IOException if reading or writing fails
+     * Detects if the file is raw pack200 or deflate-wrapped (Jagex JS5 format
+     * with an 8-byte header followed by raw deflate containing pack200 data).
      */
     private static File unpackPack200(File packFile) throws IOException {
         System.out.println("[Pack200Unpacker] Unpacking pack200: " + packFile.getName() + " ...");
 
+        byte[] rawData = readAllBytes(packFile);
+
+        // Check if the file starts with the pack200 magic
+        int magic = ((rawData[0] & 0xFF) << 24) | ((rawData[1] & 0xFF) << 16)
+                  | ((rawData[2] & 0xFF) << 8)  |  (rawData[3] & 0xFF);
+
+        InputStream packStream;
+        if (magic == PACK200_MAGIC) {
+            System.out.println("[Pack200Unpacker] Detected raw pack200 format.");
+            packStream = new ByteArrayInputStream(rawData);
+        } else {
+            // Try deflate from offset 8 (Jagex JS5 container: 8-byte header + raw deflate)
+            System.out.println("[Pack200Unpacker] Not raw pack200 (magic=" + String.format("%08X", magic)
+                    + "), trying deflate at offset 8 ...");
+            packStream = new ByteArrayInputStream(inflateFrom(rawData, 8, packFile.getName()));
+        }
+
         // Create a temp file that will hold the resulting JAR.
         File tempJar = File.createTempFile("aerodeob_", ".jar");
-        // Do NOT deleteOnExit here - Main.java handles cleanup so it can use
-        // the file for subsequent pipeline steps.
 
         Pack200.Unpacker unpacker = Pack200.newUnpacker();
-
-        // Recommended properties for reliable unpacking
         unpacker.properties().put(Pack200.Unpacker.DEFLATE_HINT, Pack200.Unpacker.FALSE);
 
-        InputStream  in  = null;
         OutputStream out = null;
         JarOutputStream jos = null;
 
         try {
-            in  = new java.io.FileInputStream(packFile);
             out = new FileOutputStream(tempJar);
             jos = new JarOutputStream(out);
-
-            unpacker.unpack(in, jos);
-
+            unpacker.unpack(packStream, jos);
             jos.finish();
             System.out.println("[Pack200Unpacker] Unpacked to temporary JAR: " + tempJar.getAbsolutePath());
             return tempJar;
-
         } catch (IOException e) {
-            // Attempt to clean up the incomplete temp file before propagating.
             safeDelete(tempJar);
             throw new IOException("Failed to unpack pack200 file '" + packFile.getName() + "': " + e.getMessage(), e);
         } finally {
             closeQuietly(jos);
             closeQuietly(out);
-            closeQuietly(in);
+            closeQuietly(packStream);
         }
+    }
+
+    /**
+     * Inflates raw deflate data starting at the given offset.
+     */
+    private static byte[] inflateFrom(byte[] data, int offset, String fileName) throws IOException {
+        try {
+            Inflater inf = new Inflater(true); // raw deflate (no zlib header)
+            inf.setInput(data, offset, data.length - offset);
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream(data.length * 4);
+            byte[] buf = new byte[8192];
+            while (!inf.finished()) {
+                int n = inf.inflate(buf);
+                if (n == 0 && inf.needsInput()) break;
+                baos.write(buf, 0, n);
+            }
+            inf.end();
+
+            byte[] result = baos.toByteArray();
+            System.out.println("[Pack200Unpacker] Inflated " + data.length + " -> " + result.length + " bytes.");
+            return result;
+        } catch (java.util.zip.DataFormatException e) {
+            throw new IOException("Failed to inflate '" + fileName + "' from offset " + offset + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Reads an entire file into a byte array.
+     */
+    private static byte[] readAllBytes(File f) throws IOException {
+        byte[] data = new byte[(int) f.length()];
+        FileInputStream fis = new FileInputStream(f);
+        try {
+            int off = 0;
+            while (off < data.length) {
+                int n = fis.read(data, off, data.length - off);
+                if (n < 0) break;
+                off += n;
+            }
+        } finally {
+            closeQuietly(fis);
+        }
+        return data;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
