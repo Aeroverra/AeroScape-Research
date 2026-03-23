@@ -8,24 +8,23 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
- * Searches the project tree for the native DLLs and hdlibs.jar required by
- * the 508 HD client, copies them into the injection output directory, and
- * generates a Boot.class entry point.
+ * Copies the native DLLs and hdlibs.jar from the deobfuscator's own lib/
+ * directory into the injection output, and generates a Boot.class entry point
+ * that pre-loads them before launching the client.
  *
- * The 508 client loads native DLLs via Runtime.load0() using absolute paths
- * constructed from its cache directory: ./cache/runescape/. The DLLs must
- * be placed there — java.library.path has no effect.
+ * Source locations (relative to deobfuscator root):
+ *   lib/jogl.dll, jogl_awt.dll, browsercontrol.dll, hdlibs.jar
+ *
+ * Output layout (inside injectionDir):
+ *   lib/*.dll, lib/hdlibs.jar
+ *   Boot.class
  */
 public final class NativeLibraryBundler {
 
     private static final String[] NATIVE_DLLS = { "jogl.dll", "jogl_awt.dll", "browsercontrol.dll" };
     private static final String HDLIBS_NAME = "hdlibs.jar";
-    /** The client resolves its cache (and DLL) directory to ./cache/runescape/ */
-    private static final String CACHE_SUBDIR = "cache/runescape";
 
     private NativeLibraryBundler() {
     }
@@ -40,52 +39,41 @@ public final class NativeLibraryBundler {
      */
     public static boolean bundle(File injectionDir, String mainClass) throws IOException {
         System.out.println();
-        System.out.println("[NativeLibraryBundler] Searching for native libraries and hdlibs.jar ...");
+        System.out.println("[NativeLibraryBundler] Bundling native libraries and hdlibs.jar ...");
 
-        File projectRoot = findProjectRoot(injectionDir);
-        System.out.println("[NativeLibraryBundler] Project root: " + projectRoot.getAbsolutePath());
+        // Source: deobfuscator's own lib/ directory (next to src/, input/, output/)
+        File deobRoot = new File(".").getAbsoluteFile().getParentFile();
+        File srcLibDir = new File(deobRoot, "lib");
 
-        // --- Find and copy native DLLs to cache/runescape/ ---
-        // The client loads DLLs via Runtime.load0() with absolute paths from
-        // ./cache/runescape/ — java.library.path is not used.
-        File cacheDir = new File(injectionDir, CACHE_SUBDIR);
-        if (!cacheDir.exists() && !cacheDir.mkdirs()) {
-            System.err.println("[NativeLibraryBundler] Failed to create cache directory: "
-                    + cacheDir.getAbsolutePath());
+        // Destination: injectionDir/lib/
+        File dstLibDir = new File(injectionDir, "lib");
+        if (!dstLibDir.exists() && !dstLibDir.mkdirs()) {
+            System.err.println("[NativeLibraryBundler] Failed to create: " + dstLibDir.getAbsolutePath());
             return false;
         }
 
+        // --- Copy native DLLs ---
         int dllsCopied = 0;
         for (String dllName : NATIVE_DLLS) {
-            File found = findFile(projectRoot, dllName, injectionDir);
-            if (found != null) {
-                File dest = new File(cacheDir, dllName);
-                copyFile(found, dest);
-                System.out.println("[NativeLibraryBundler] Copied: " + CACHE_SUBDIR + "/" + dllName
-                        + " <- " + found.getAbsolutePath());
+            File src = new File(srcLibDir, dllName);
+            if (src.isFile() && src.length() > 0) {
+                copyFile(src, new File(dstLibDir, dllName));
+                System.out.println("[NativeLibraryBundler] Copied: lib/" + dllName);
                 dllsCopied++;
             } else {
-                System.err.println("[NativeLibraryBundler] WARNING: Could not find " + dllName);
+                System.err.println("[NativeLibraryBundler] WARNING: Not found: " + src.getAbsolutePath());
             }
         }
 
-        // --- Find and copy hdlibs.jar ---
-        File libDir = new File(injectionDir, "lib");
-        if (!libDir.exists() && !libDir.mkdirs()) {
-            System.err.println("[NativeLibraryBundler] Failed to create lib directory.");
-            return false;
-        }
-
+        // --- Copy hdlibs.jar ---
         boolean hdlibsCopied = false;
-        File hdlibs = findFile(projectRoot, HDLIBS_NAME, injectionDir);
-        if (hdlibs != null) {
-            File dest = new File(libDir, HDLIBS_NAME);
-            copyFile(hdlibs, dest);
-            System.out.println("[NativeLibraryBundler] Copied: lib/" + HDLIBS_NAME
-                    + " <- " + hdlibs.getAbsolutePath());
+        File srcHdlibs = new File(srcLibDir, HDLIBS_NAME);
+        if (srcHdlibs.isFile() && srcHdlibs.length() > 0) {
+            copyFile(srcHdlibs, new File(dstLibDir, HDLIBS_NAME));
+            System.out.println("[NativeLibraryBundler] Copied: lib/" + HDLIBS_NAME);
             hdlibsCopied = true;
         } else {
-            System.err.println("[NativeLibraryBundler] WARNING: Could not find " + HDLIBS_NAME);
+            System.err.println("[NativeLibraryBundler] WARNING: Not found: " + srcHdlibs.getAbsolutePath());
         }
 
         // --- Generate Boot.class ---
@@ -106,66 +94,6 @@ public final class NativeLibraryBundler {
     }
 
     /**
-     * Walks up from the given directory to find the project root
-     * (the directory containing "3rd Party" or the git root).
-     */
-    private static File findProjectRoot(File startDir) {
-        File dir = startDir.getAbsoluteFile();
-        while (dir != null) {
-            if (new File(dir, "3rd Party").isDirectory() || new File(dir, ".git").exists()) {
-                return dir;
-            }
-            dir = dir.getParentFile();
-        }
-        return new File(".").getAbsoluteFile().getParentFile();
-    }
-
-    /**
-     * Recursively searches for a file by name under the given root.
-     * Returns the first match found, or null.
-     */
-    private static File findFile(File root, String fileName) {
-        return findFile(root, fileName, null);
-    }
-
-    /**
-     * Recursively searches for a file by name under the given root,
-     * skipping the excludeDir (to avoid finding our own output).
-     * Only returns files with non-zero size.
-     */
-    private static File findFile(File root, String fileName, File excludeDir) {
-        List<File> stack = new ArrayList<>();
-        stack.add(root);
-
-        String excludePath = excludeDir != null ? excludeDir.getAbsolutePath() : null;
-
-        while (!stack.isEmpty()) {
-            File dir = stack.remove(stack.size() - 1);
-            File[] children = dir.listFiles();
-            if (children == null) continue;
-
-            for (File child : children) {
-                if (child.isFile()
-                        && child.getName().equalsIgnoreCase(fileName)
-                        && child.length() > 0) {
-                    return child;
-                }
-                if (child.isDirectory()
-                        && !child.getName().equals(".git")
-                        && !child.getName().equals("target")
-                        && !child.getName().equals("node_modules")) {
-                    if (excludePath != null
-                            && child.getAbsolutePath().equals(excludePath)) {
-                        continue;
-                    }
-                    stack.add(child);
-                }
-            }
-        }
-        return null;
-    }
-
-    /**
      * Generates Boot.class bytecode using ASM. Equivalent to:
      *
      * <pre>
@@ -179,12 +107,15 @@ public final class NativeLibraryBundler {
      *             Class.forName("java.awt.Toolkit");
      *         } catch (Throwable ignored) { }
      *
-     *         // Pre-load jawt.dll explicitly from java.home/bin so the client's
-     *         // command-10 handler (patched to a no-op) never needs to do it.
-     *         try {
-     *             String javaHome = System.getProperty("java.home");
-     *             System.load(javaHome + "/bin/jawt.dll");
-     *         } catch (Throwable ignored) { }
+     *         // Pre-load jawt.dll from java.home/bin
+     *         try { System.load(System.getProperty("java.home") + "/bin/jawt.dll"); }
+     *         catch (Throwable ignored) { }
+     *
+     *         // Pre-load JOGL natives from lib/
+     *         try { System.load(new File("lib", "jogl.dll").getAbsolutePath()); }
+     *         catch (Throwable ignored) { }
+     *         try { System.load(new File("lib", "jogl_awt.dll").getAbsolutePath()); }
+     *         catch (Throwable ignored) { }
      *
      *         client.main(new String[]{"1", "live", "live", "software", "members", "english", "game0"});
      *     }
@@ -267,7 +198,7 @@ public final class NativeLibraryBundler {
         mv.visitInsn(Opcodes.POP); // discard Throwable (already loaded, or not Windows)
         mv.visitLabel(afterJawtBlock);
 
-        // --- Block 3 & 4: Load jogl.dll and jogl_awt.dll from cache/runescape ---
+        // --- Block 3 & 4: Load jogl.dll and jogl_awt.dll from lib/ ---
         String[] joglDlls = { "jogl.dll", "jogl_awt.dll" };
         for (String dll : joglDlls) {
             org.objectweb.asm.Label tryStart = new org.objectweb.asm.Label();
@@ -277,10 +208,10 @@ public final class NativeLibraryBundler {
 
             mv.visitTryCatchBlock(tryStart, tryEnd, catchLabel, "java/lang/Throwable");
             mv.visitLabel(tryStart);
-            // new File("cache" + File.separator + "runescape", dll).getAbsolutePath()
+            // new File("lib", dll).getAbsolutePath()
             mv.visitTypeInsn(Opcodes.NEW, "java/io/File");
             mv.visitInsn(Opcodes.DUP);
-            mv.visitLdcInsn("cache/runescape");
+            mv.visitLdcInsn("lib");
             mv.visitLdcInsn(dll);
             mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/io/File", "<init>",
                     "(Ljava/lang/String;Ljava/lang/String;)V", false);
