@@ -347,3 +347,19 @@ healthchecksdb
 
 # Backup folder for Package Reference Convert tool in Visual Studio 2017
 MigrationBackup/
+
+3rd Party/server508/data/connections/
+
+# Java build artifacts
+AeroRunTekDeobfuscator/out/
+AeroRunTekDeobfuscator/output/
+AeroRunTekDeobfuscator/.idea/
+
+# IntelliJ
+*.iws
+
+.claude/
+
+AeroRunTekDeobfuscator/input/
+
+AeroRunTekDeobfuscator/target/
