@@ -1,5 +1,6 @@
 import injection.InjectionContext;
 import injection.IpRedirectInjection;
+import injection.IsaacBypassInjection;
 import injection.JarLoader;
 import injection.JarRepackager;
 import injection.RsaLobotomyInjection;
@@ -60,19 +61,23 @@ public final class InjectionPipeline {
         // Step 3: Apply IP Redirect
         int ipPatches = IpRedirectInjection.apply(ctx);
 
-        // Step 4: Detect main class and repackage
+        // Step 4: Apply ISAAC Cipher Bypass
+        int isaacPatches = IsaacBypassInjection.apply(ctx);
+
+        // Step 5: Detect main class and repackage
         String mainClass = JarRepackager.detectMainClass(ctx);
         File outputJar = new File(injectionDir, baseName + "_patched.jar");
         JarRepackager.repack(jarFile, ctx, outputJar, mainClass);
 
-        // Step 5: Generate run.bat
+        // Step 6: Generate run.bat
         generateRunBat(injectionDir, outputJar.getName(), mainClass);
 
         // Summary
         System.out.println();
         System.out.println("[InjectionPipeline] ======= Injection Summary =======");
-        System.out.println("[InjectionPipeline] RSA patches applied : " + rsaPatches);
-        System.out.println("[InjectionPipeline] IP patches applied  : " + ipPatches);
+        System.out.println("[InjectionPipeline] RSA patches applied   : " + rsaPatches);
+        System.out.println("[InjectionPipeline] IP patches applied    : " + ipPatches);
+        System.out.println("[InjectionPipeline] ISAAC patches applied : " + isaacPatches);
         System.out.println("[InjectionPipeline] Output JAR          : " + outputJar.getAbsolutePath());
         System.out.println("[InjectionPipeline] Main-Class          : " + mainClass);
         System.out.println("[InjectionPipeline] ================================");
