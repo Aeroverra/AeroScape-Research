@@ -1,110 +1,112 @@
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 
 /**
  * WrapperGenerator
  *
- * Generates a standalone {@code Main.java} wrapper that loads the RS 508
- * client from the original JAR at runtime and launches it in a JFrame.
- *
- * The generated wrapper compiles standalone (no decompiled sources needed)
- * and uses reflection + URLClassLoader to load the client class from the
- * original JAR, since CFR decompiled output may contain uncompilable
- * artifacts from heavily obfuscated bytecode.
+ * Loads a Main.java template from templates/Main.java.txt, replaces
+ * placeholders, and writes it along with #compile.bat and #run.bat
+ * into the output directory.
  */
 public final class WrapperGenerator {
 
+    private static final String TEMPLATE_PATH = "templates/Main.java.txt";
+
     private WrapperGenerator() {
-        // utility class - no instances
     }
 
     /**
-     * Writes {@code Main.java} into {@code outputDir}.
-     *
-     * @param outputDir the directory that already contains the decompiled sources
-     * @param jarFile   the original client JAR (needed at runtime by the wrapper)
-     * @throws IOException if the file cannot be written
+     * Generates Main.java, #compile.bat, and #run.bat into outputDir.
      */
     public static void generate(File outputDir, File jarFile) throws IOException {
-        System.out.println("[WrapperGenerator] Generating wrapper Main.java ...");
+        System.out.println("[WrapperGenerator] Generating wrapper files ...");
 
-        File wrapperFile = new File(outputDir, "Main.java");
+        String template = loadTemplate();
+        String jarPath = jarFile.getAbsolutePath().replace('\\', '/');
+        String source = template.replace("{JAR_PATH}", jarPath);
 
+        writeFile(new File(outputDir, "Main.java"), source);
+        System.out.println("[WrapperGenerator] Written: Main.java");
+
+        writeFile(new File(outputDir, "#compile.bat"), buildCompileBat());
+        System.out.println("[WrapperGenerator] Written: #compile.bat");
+
+        writeFile(new File(outputDir, "#run.bat"), buildRunBat());
+        System.out.println("[WrapperGenerator] Written: #run.bat");
+    }
+
+    private static String loadTemplate() throws IOException {
+        File templateFile = new File(TEMPLATE_PATH);
+        InputStream in;
+
+        if (templateFile.exists()) {
+            in = new FileInputStream(templateFile);
+        } else {
+            // Try classpath as fallback (e.g. running from JAR)
+            in = WrapperGenerator.class.getResourceAsStream("/" + TEMPLATE_PATH);
+            if (in == null) {
+                throw new IOException("Template not found: " + TEMPLATE_PATH);
+            }
+        }
+
+        StringBuilder sb = new StringBuilder(4096);
+        BufferedReader reader = null;
+        try {
+            reader = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sb.append(line).append('\n');
+            }
+        } finally {
+            if (reader != null) {
+                try { reader.close(); } catch (IOException ignored) { }
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String buildCompileBat() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("@echo off\n");
+        sb.append("echo Compiling Main.java ...\n");
+        sb.append("javac Main.java\n");
+        sb.append("if %ERRORLEVEL% NEQ 0 (\n");
+        sb.append("    echo Compilation failed.\n");
+        sb.append("    pause\n");
+        sb.append("    exit /b 1\n");
+        sb.append(")\n");
+        sb.append("echo Done.\n");
+        sb.append("pause\n");
+        return sb.toString();
+    }
+
+    private static String buildRunBat() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("@echo off\n");
+        sb.append("echo Launching RS 508 client ...\n");
+        sb.append("java Main\n");
+        sb.append("pause\n");
+        return sb.toString();
+    }
+
+    private static void writeFile(File file, String content) throws IOException {
         BufferedWriter writer = null;
         try {
             writer = new BufferedWriter(
-                    new OutputStreamWriter(
-                            new FileOutputStream(wrapperFile), "UTF-8"
-                    )
+                    new OutputStreamWriter(new FileOutputStream(file), "UTF-8")
             );
-            writer.write(buildSource(jarFile));
-            System.out.println("[WrapperGenerator] Wrapper written to: " + wrapperFile.getAbsolutePath());
+            writer.write(content);
         } finally {
             if (writer != null) {
-                try { writer.close(); } catch (IOException ignored) { /* best-effort */ }
+                try { writer.close(); } catch (IOException ignored) { }
             }
         }
-    }
-
-    private static String buildSource(File jarFile) {
-        String jarPath = jarFile.getAbsolutePath().replace('\\', '/');
-
-        StringBuilder sb = new StringBuilder(4096);
-
-        sb.append("import java.io.File;\n");
-        sb.append("import java.lang.reflect.Method;\n");
-        sb.append("import java.net.URL;\n");
-        sb.append("import java.net.URLClassLoader;\n");
-        sb.append("\n");
-        sb.append("/**\n");
-        sb.append(" * Generated by AeroRunTekDeobfuscator\n");
-        sb.append(" *\n");
-        sb.append(" * Launches the RS 508 client from the original JAR.\n");
-        sb.append(" * The client's own main() method handles JFrame creation and boot args.\n");
-        sb.append(" *\n");
-        sb.append(" * Compile:  javac Main.java\n");
-        sb.append(" * Run:      java Main\n");
-        sb.append(" *\n");
-        sb.append(" * Default boot args: 1 live live software members english game0\n");
-        sb.append(" */\n");
-        sb.append("public class Main {\n");
-        sb.append("\n");
-        sb.append("    private static final String CLIENT_JAR = \"").append(jarPath).append("\";\n");
-        sb.append("\n");
-        sb.append("    private static final String[] DEFAULT_ARGS = {\n");
-        sb.append("        \"1\", \"live\", \"live\", \"software\", \"members\", \"english\", \"game0\"\n");
-        sb.append("    };\n");
-        sb.append("\n");
-        sb.append("    public static void main(String[] args) throws Exception {\n");
-        sb.append("        File jar = new File(CLIENT_JAR);\n");
-        sb.append("        if (!jar.exists()) {\n");
-        sb.append("            System.err.println(\"[Main] Client JAR not found: \" + jar.getAbsolutePath());\n");
-        sb.append("            System.exit(1);\n");
-        sb.append("        }\n");
-        sb.append("\n");
-        sb.append("        // Load the client JAR\n");
-        sb.append("        URLClassLoader loader = new URLClassLoader(\n");
-        sb.append("                new URL[]{ jar.toURI().toURL() },\n");
-        sb.append("                Main.class.getClassLoader()\n");
-        sb.append("        );\n");
-        sb.append("\n");
-        sb.append("        // Set as context classloader so the client can load its own classes\n");
-        sb.append("        Thread.currentThread().setContextClassLoader(loader);\n");
-        sb.append("\n");
-        sb.append("        // Load and invoke client.main(String[] args)\n");
-        sb.append("        Class<?> clientClass = loader.loadClass(\"client\");\n");
-        sb.append("        Method mainMethod = clientClass.getMethod(\"main\", String[].class);\n");
-        sb.append("\n");
-        sb.append("        // Use provided args or defaults\n");
-        sb.append("        String[] bootArgs = (args != null && args.length >= 7) ? args : DEFAULT_ARGS;\n");
-        sb.append("        System.out.println(\"[Main] Launching RS 508 client...\");\n");
-        sb.append("        mainMethod.invoke(null, (Object) bootArgs);\n");
-        sb.append("    }\n");
-        sb.append("}\n");
-
-        return sb.toString();
     }
 }
