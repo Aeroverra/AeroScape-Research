@@ -2,7 +2,7 @@ import java.io.File;
 import java.io.IOException;
 
 /**
- * AeroRunTekDeobfuscator - Step 1 Pipeline Entry Point
+ * AeroRunTekDeobfuscator - Pipeline Entry Point
  *
  * Scans the "input" folder for .jar / .pack200 / .packclass files and processes
  * each one. Output goes to "output/{jarName}/" as a subfolder per JAR.
@@ -14,7 +14,16 @@ public class Main {
     private static final String INPUT_DIR = "input";
     private static final String OUTPUT_DIR = "output";
 
+    private static boolean skipDecompile = false;
+
     public static void main(String[] args) {
+        // Parse flags
+        for (String arg : args) {
+            if ("--skip-decompile".equals(arg)) {
+                skipDecompile = true;
+            }
+        }
+
         File inputDir = new File(INPUT_DIR);
         File outputRoot = new File(OUTPUT_DIR);
 
@@ -73,6 +82,7 @@ public class Main {
     }
 
     private static boolean processFile(File inputFile, File outputDir) {
+        String baseName = stripExtension(inputFile.getName());
         // Step 1: Unpack pack200 if needed
         File jarFile;
         try {
@@ -83,36 +93,48 @@ public class Main {
             return false;
         }
 
-        // Step 2: Decompile with CFR
+        if (!skipDecompile) {
+            // Step 2: Decompile with Vineflower
+            try {
+                Decompiler.decompile(jarFile, outputDir);
+            } catch (Exception e) {
+                System.err.println("[ERROR] Decompilation failed: " + e.getMessage());
+                e.printStackTrace(System.err);
+                cleanupTemp(jarFile, inputFile);
+                return false;
+            }
+
+            // Step 3: Copy JAR into output so the wrapper can reference it
+            String jarName = baseName + ".jar";
+            File outputJar = new File(outputDir, jarName);
+            try {
+                copyFile(jarFile, outputJar);
+                System.out.println("[INFO] Client JAR copied to: " + outputJar.getAbsolutePath());
+            } catch (IOException e) {
+                System.err.println("[ERROR] Failed to copy JAR to output: " + e.getMessage());
+                cleanupTemp(jarFile, inputFile);
+                return false;
+            }
+
+            // Step 4: Generate wrapper
+            try {
+                WrapperGenerator.generate(outputDir, outputJar);
+            } catch (IOException e) {
+                System.err.println("[ERROR] Wrapper generation failed: " + e.getMessage());
+                e.printStackTrace(System.err);
+                cleanupTemp(jarFile, inputFile);
+                return false;
+            }
+        } else {
+            System.out.println("[INFO] Skipping decompilation (--skip-decompile).");
+        }
+
+        // Phase 2: ASM Injection Pipeline (parallel output, does not affect Step 1)
         try {
-            Decompiler.decompile(jarFile, outputDir);
+            InjectionPipeline.run(jarFile, outputDir.getParentFile(), baseName);
         } catch (Exception e) {
-            System.err.println("[ERROR] Decompilation failed: " + e.getMessage());
+            System.err.println("[WARN] Injection pipeline failed (non-fatal): " + e.getMessage());
             e.printStackTrace(System.err);
-            cleanupTemp(jarFile, inputFile);
-            return false;
-        }
-
-        // Step 3: Copy JAR into output so the wrapper can reference it
-        String jarName = stripExtension(inputFile.getName()) + ".jar";
-        File outputJar = new File(outputDir, jarName);
-        try {
-            copyFile(jarFile, outputJar);
-            System.out.println("[INFO] Client JAR copied to: " + outputJar.getAbsolutePath());
-        } catch (IOException e) {
-            System.err.println("[ERROR] Failed to copy JAR to output: " + e.getMessage());
-            cleanupTemp(jarFile, inputFile);
-            return false;
-        }
-
-        // Step 4: Generate wrapper
-        try {
-            WrapperGenerator.generate(outputDir, outputJar);
-        } catch (IOException e) {
-            System.err.println("[ERROR] Wrapper generation failed: " + e.getMessage());
-            e.printStackTrace(System.err);
-            cleanupTemp(jarFile, inputFile);
-            return false;
         }
 
         cleanupTemp(jarFile, inputFile);
